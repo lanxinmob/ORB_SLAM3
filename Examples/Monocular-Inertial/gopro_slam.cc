@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <signal.h>
@@ -220,9 +221,12 @@ int main(int argc, char **argv) {
   std::vector<ORB_SLAM3::IMU::Point> vImuMeas;
   size_t last_imu_idx = 0;
   int n_lost_frames = 0;
+  constexpr int kFrameStep = 2;
+  double prev_tframe = -1.0;
+  int processed_frame_count = 0;
+  cout << "Processing every " << kFrameStep
+       << " frame(s); expected SLAM input FPS " << fps / kFrameStep << endl;
   for (int frame_idx=0; frame_idx < nImages; frame_idx++){
-    double tframe = (double)frame_idx / fps;
-
     // read frame from video
     cv::Mat im,im_track;
     bool success = cap.read(im);
@@ -230,6 +234,31 @@ int main(int argc, char **argv) {
       cout << "cap.read failed!" << endl;
       break;
     }
+
+    // Decode all frames sequentially, but only submit frames 0, 2, 4, ...
+    // to SLAM. Sequential decoding preserves the container presentation order.
+    if ((frame_idx % kFrameStep) != 0) {
+      continue;
+    }
+
+    // OpenCV's FFmpeg backend exposes the decoded frame presentation timestamp
+    // through CAP_PROP_POS_MSEC. Use it instead of synthesizing frame_idx / fps.
+    const double tframe = cap.get(cv::CAP_PROP_POS_MSEC) * MS_TO_S;
+    if (!std::isfinite(tframe) || tframe < 0.0) {
+      cerr << "Invalid video PTS at source frame " << frame_idx
+           << ": " << tframe << " s" << endl;
+      SLAM.Shutdown();
+      return 1;
+    }
+    if (prev_tframe >= 0.0 && tframe <= prev_tframe) {
+      cerr << "Non-monotonic video PTS at source frame " << frame_idx
+           << ": current=" << tframe << " s, previous=" << prev_tframe
+           << " s" << endl;
+      SLAM.Shutdown();
+      return 1;
+    }
+    prev_tframe = tframe;
+    processed_frame_count++;
 
     // resize image and draw gripper mask
     im_track = im.clone();
@@ -277,8 +306,9 @@ int main(int argc, char **argv) {
         std::chrono::duration_cast<std::chrono::duration<double>>(t2 - t1)
             .count();
 
-    if (frame_idx % 100 == 0) {
-      std::cout<<"Video FPS: "<<fps<<"\n";
+    if (processed_frame_count % 100 == 0) {
+      std::cout<<"Source video FPS: "<<fps<<"\n";
+      std::cout<<"Current video PTS: "<<tframe<<" s\n";
       std::cout<<"ORB-SLAM 3 running at: "<<1./ttrack<< " FPS\n";
     }
   }

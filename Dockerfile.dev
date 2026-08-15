@@ -1,0 +1,29 @@
+# syntax=docker/dockerfile:1.7
+
+# This image must already contain ORB-SLAM3 and its third-party dependencies.
+# The official UMI image is the default, but a locally built release image can
+# be supplied with --build-arg ORB_SLAM3_BASE_IMAGE=...
+ARG ORB_SLAM3_BASE_IMAGE=chicheng/orb_slam3:latest
+FROM ${ORB_SLAM3_BASE_IMAGE}
+
+ARG BUILD_JOBS=8
+
+# Overlay all files commonly changed while developing the UMI SLAM path.
+# Third-party dependencies and the vocabulary remain in the base image.
+COPY CMakeLists.txt /ORB_SLAM3/CMakeLists.txt
+COPY include/ /ORB_SLAM3/include/
+COPY src/ /ORB_SLAM3/src/
+COPY Examples/Monocular-Inertial/gopro_slam.cc /ORB_SLAM3/Examples/Monocular-Inertial/gopro_slam.cc
+COPY Examples/Monocular-Inertial/*.yaml /ORB_SLAM3/Examples/Monocular-Inertial/
+
+# Seed a persistent BuildKit cache from the build tree already present in the
+# base image. Later builds reuse object files and rebuild only sources affected
+# by changes to gopro_slam, Tracking, System, Optimizer, headers, and so on.
+RUN --mount=type=cache,id=orb-slam3-dev-build,target=/var/cache/orb-slam3-build,sharing=locked \
+    if [ ! -f /var/cache/orb-slam3-build/CMakeCache.txt ] && [ -d /ORB_SLAM3/build ]; then \
+        cp -a /ORB_SLAM3/build/. /var/cache/orb-slam3-build/; \
+    fi
+
+RUN --mount=type=cache,id=orb-slam3-dev-build,target=/ORB_SLAM3/build,sharing=locked \
+    cmake -S /ORB_SLAM3 -B /ORB_SLAM3/build -DCMAKE_BUILD_TYPE=RelWithDebInfo && \
+    cmake --build /ORB_SLAM3/build --target gopro_slam --parallel "${BUILD_JOBS}"
