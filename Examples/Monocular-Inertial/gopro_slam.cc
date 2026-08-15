@@ -242,20 +242,34 @@ int main(int argc, char **argv) {
     }
 
     // OpenCV's FFmpeg backend exposes the decoded frame presentation timestamp
-    // through CAP_PROP_POS_MSEC. Use it instead of synthesizing frame_idx / fps.
-    const double tframe = cap.get(cv::CAP_PROP_POS_MSEC) * MS_TO_S;
-    if (!std::isfinite(tframe) || tframe < 0.0) {
-      cerr << "Invalid video PTS at source frame " << frame_idx
-           << ": " << tframe << " s" << endl;
-      SLAM.Shutdown();
-      return 1;
-    }
-    if (prev_tframe >= 0.0 && tframe <= prev_tframe) {
-      cerr << "Non-monotonic video PTS at source frame " << frame_idx
-           << ": current=" << tframe << " s, previous=" << prev_tframe
-           << " s" << endl;
-      SLAM.Shutdown();
-      return 1;
+    // through CAP_PROP_POS_MSEC, but may reset it to zero on the final frame.
+    const double reported_tframe =
+        cap.get(cv::CAP_PROP_POS_MSEC) * MS_TO_S;
+    const double fallback_tframe =
+        static_cast<double>(frame_idx) / fps;
+    double tframe = reported_tframe;
+
+    const bool invalid_pts =
+        !std::isfinite(tframe) ||
+        tframe < 0.0 ||
+        (prev_tframe >= 0.0 && tframe <= prev_tframe);
+
+    if (invalid_pts) {
+      const bool near_video_end = frame_idx >= nImages - kFrameStep;
+
+      if (near_video_end && fallback_tframe > prev_tframe) {
+        cerr << "[PTS WARN] Invalid tail PTS at source frame " << frame_idx
+             << ": reported=" << reported_tframe
+             << " s, using CFR fallback=" << fallback_tframe << " s"
+             << endl;
+        tframe = fallback_tframe;
+      } else {
+        cerr << "Invalid/non-monotonic video PTS at source frame " << frame_idx
+             << ": current=" << reported_tframe
+             << " s, previous=" << prev_tframe << " s" << endl;
+        SLAM.Shutdown();
+        return 1;
+      }
     }
     prev_tframe = tframe;
     processed_frame_count++;
