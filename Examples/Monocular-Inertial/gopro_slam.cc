@@ -255,10 +255,15 @@ int main(int argc, char **argv) {
         (prev_tframe >= 0.0 && tframe <= prev_tframe);
 
     if (invalid_pts) {
-      const bool near_video_end = frame_idx >= nImages - kFrameStep;
+      const double expected_step =
+          static_cast<double>(kFrameStep) / fps;
+      const double fallback_delta = fallback_tframe - prev_tframe;
+      const bool valid_cfr_fallback =
+          fallback_tframe > prev_tframe &&
+          std::abs(fallback_delta - expected_step) < expected_step * 0.25;
 
-      if (near_video_end && fallback_tframe > prev_tframe) {
-        cerr << "[PTS WARN] Invalid tail PTS at source frame " << frame_idx
+      if (valid_cfr_fallback) {
+        cerr << "[PTS WARN] Invalid reported PTS at source frame " << frame_idx
              << ": reported=" << reported_tframe
              << " s, using CFR fallback=" << fallback_tframe << " s"
              << endl;
@@ -266,7 +271,9 @@ int main(int argc, char **argv) {
       } else {
         cerr << "Invalid/non-monotonic video PTS at source frame " << frame_idx
              << ": current=" << reported_tframe
-             << " s, previous=" << prev_tframe << " s" << endl;
+             << " s, previous=" << prev_tframe
+             << " s, fallback=" << fallback_tframe
+             << " s, expected_step=" << expected_step << " s" << endl;
         SLAM.Shutdown();
         return 1;
       }
