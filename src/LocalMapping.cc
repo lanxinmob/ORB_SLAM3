@@ -105,6 +105,11 @@ void LocalMapping::Run()
                             float dist = (mpCurrentKeyFrame->mPrevKF->GetCameraCenter() - mpCurrentKeyFrame->GetCameraCenter()).norm() +
                                     (mpCurrentKeyFrame->mPrevKF->mPrevKF->GetCameraCenter() - mpCurrentKeyFrame->mPrevKF->GetCameraCenter()).norm();
 
+                            double dt = mpCurrentKeyFrame->mTimeStamp - mpCurrentKeyFrame->mPrevKF->mTimeStamp;
+
+                            std::cout<< "[LMIMU_DIST]"<< " kf=" << mpCurrentKeyFrame->mnId<< " prevKF=" << mpCurrentKeyFrame->mPrevKF->mnId
+                                << " dist=" << dist<< " dt=" << dt<< " mTinit_before=" << mTinit<< std::endl;
+
                             if(dist>0.05)
                                 mTinit += mpCurrentKeyFrame->mTimeStamp - mpCurrentKeyFrame->mPrevKF->mTimeStamp;
 
@@ -136,15 +141,36 @@ void LocalMapping::Run()
                 // Initialize IMU here
                 if(!mpCurrentKeyFrame->GetMap()->isImuInitialized() && mbInertial)
                 {
-                    if (mbMonocular)
+                    if (mbMonocular){
+                        std::cout<< "[IMUINIT_CALL]"
+                            << " kf=" << mpCurrentKeyFrame->mnId
+                            << " imuInit="<< mpCurrentKeyFrame->GetMap()->isImuInitialized()
+                            << std::endl;
+
                         InitializeIMU(1e2, 1e10, true);
-                    else
+
+                        std::cout<< "[IMUINIT_RET]"
+                            << " kf=" << mpCurrentKeyFrame->mnId
+                            << " imuInit="<< mpCurrentKeyFrame->GetMap()->isImuInitialized()
+                            << std::endl;
+                    }else{
                         InitializeIMU(1e2, 1e5, true);
+                    }
                 }
 
 
                 // Check redundant local Keyframes
                 KeyFrameCulling();
+
+                std::cout<< "[LMIMU]"
+                    << " kf=" << mpCurrentKeyFrame->mnId
+                    << " ts=" << mpCurrentKeyFrame->mTimeStamp
+                    << " mTinit=" << mTinit
+                    << " imuInit=" << mpCurrentKeyFrame->GetMap()->isImuInitialized()
+                    << " BA1=" << mpCurrentKeyFrame->GetMap()->GetIniertialBA1()
+                    << " BA2=" << mpCurrentKeyFrame->GetMap()->GetIniertialBA2()
+                    << " trackInliers=" << mpTracker->GetMatchesInliers()
+                    << std::endl;
 
                 if ((mTinit<50.0f) && mbInertial)
                 {

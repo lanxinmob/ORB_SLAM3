@@ -1098,10 +1098,34 @@ int Optimizer::PoseOptimization(Frame *pFrame)
             if(it==2)
                 e->setRobustKernel(0);
         }
+        std::cout<< "[POSEOPT]"<< " frame=" << pFrame->mnId<< " iter=" << it<< " initCorr=" << nInitialCorrespondences
+            << " bad=" << nBad<< " remain=" << nInitialCorrespondences - nBad<< std::endl;
+            
+        double chi2Sum = 0.0;
+        double chi2Max = 0.0;
+        int chi2Count = 0;
+        int overTh = 0;
+
+        for(size_t i=0; i<vpEdgesMono.size(); i++){
+            auto* e = vpEdgesMono[i];
+
+            e->computeError();
+
+            double c = e->chi2();
+
+            chi2Sum += c;
+            chi2Max = std::max(chi2Max, c);
+            chi2Count++;
+
+            if(c > chi2Mono[it])overTh++;
+        }
+
+        std::cout<< "[POSECHI2]"<< " frame=" << pFrame->mnId<< " iter=" << it<< " N=" << chi2Count<< " mean=" << (chi2Count ? chi2Sum / chi2Count : 0.0)
+            << " max=" << chi2Max<< " over=" << overTh<< std::endl;   
 
         if(optimizer.edges().size()<10)
             break;
-    }    
+    } 
 
     // Recover optimized pose and return number of inliers
     g2o::VertexSE3Expmap* vSE3_recov = static_cast<g2o::VertexSE3Expmap*>(optimizer.vertex(0));

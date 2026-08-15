@@ -2172,7 +2172,12 @@ void Tracking::MonocularInitialization()
 
         Sophus::SE3f Tcw;
         vector<bool> vbTriangulated; // Triangulated Correspondences (mvIniMatches)
-
+        /*
+        int nValidMatches = 0;
+        for(const int idx : mvIniMatches){
+            if(idx >= 0)
+                nValidMatches++;
+        }*/
         bool reconstruct_success = mpCamera->ReconstructWithTwoViews(
             mInitialFrame.mvKeysUn,
             mCurrentFrame.mvKeysUn,
@@ -2181,7 +2186,14 @@ void Tracking::MonocularInitialization()
             mvIniP3D,
             vbTriangulated
         );
-        std::cout << "init_success=" << reconstruct_success << endl;
+        std::cout << "init_success=" << reconstruct_success << endl;  
+        /*std::cout<< "[RECON NORMAL]"
+            << " ok=" << reconstruct_success
+            << " slots=" << mvIniMatches.size()
+            << " valid=" << nValidMatches
+            << " p3d=" << p3dNormal.size()
+            << " triangulated=" << triNormal.size()
+            << std::endl;*/
         if (!reconstruct_success) {
             reconstruct_success = mpCamera->ReconstructWithTwoViewsAndTags(
                 mInitialFrame.markerIds,
@@ -2223,27 +2235,52 @@ void Tracking::MonocularInitialization()
 
 
 void Tracking::CreateInitialMapMonocular()
-{
+{   
+    std::cout << "[CIMM 0] enter" << std::endl;
     // Create KeyFrames
     KeyFrame* pKFini = new KeyFrame(mInitialFrame,mpAtlas->GetCurrentMap(),mpKeyFrameDB);
+    std::cout << "[CIMM 1] pKFini created" << std::endl;
     KeyFrame* pKFcur = new KeyFrame(mCurrentFrame,mpAtlas->GetCurrentMap(),mpKeyFrameDB);
+    std::cout << "[CIMM 2] pKFcur created" << std::endl;
 
     if(mSensor == System::IMU_MONOCULAR)
         pKFini->mpImuPreintegrated = (IMU::Preintegrated*)(NULL);
-
+    std::cout << "[CIMM 3] before BoW" << std::endl;
 
     pKFini->ComputeBoW();
+    std::cout << "[CIMM 4] ini BoW done" << std::endl;
     pKFcur->ComputeBoW();
+    std::cout << "[CIMM 5] cur BoW done" << std::endl;
 
     // Insert KFs in the map
     mpAtlas->AddKeyFrame(pKFini);
+    std::cout << "[CIMM 6] ini KF added" << std::endl;
     mpAtlas->AddKeyFrame(pKFcur);
+    std::cout << "[CIMM 7] cur KF added" << std::endl;
 
+    int dbgCreated = 0;
     for(size_t i=0; i<mvIniMatches.size();i++)
     {
         if(mvIniMatches[i]<0)
             continue;
 
+        if(i >= mvIniP3D.size()){
+            std::cout<< "[CIMM BAD] i=" << i
+                << " mvIniP3D.size=" << mvIniP3D.size()
+                << " mvIniMatches.size=" << mvIniMatches.size()
+                << std::endl;
+            continue;
+        }
+
+        const int j = mvIniMatches[i];
+
+        if(j < 0 || j >= mCurrentFrame.N){
+            std::cout<< "[CIMM BAD MATCH] i=" << i
+                << " j=" << j
+                << " currentN=" << mCurrentFrame.N
+                << std::endl;
+            continue;
+        }
         //Create MapPoint.
         Eigen::Vector3f worldPos;
         worldPos << mvIniP3D[i].x, mvIniP3D[i].y, mvIniP3D[i].z;
@@ -2264,8 +2301,13 @@ void Tracking::CreateInitialMapMonocular()
 
         //Add to Map
         mpAtlas->AddMapPoint(pMP);
+        dbgCreated++;
     }
-
+    std::cout<< "[CIMM 8] MPs created=" << dbgCreated
+        << " iniMatches=" << mvIniMatches.size()
+        << " iniP3D=" << mvIniP3D.size()
+        << " currentN=" << mCurrentFrame.N
+        << std::endl;
 
     // Update Connections
     pKFini->UpdateConnections();
@@ -2652,7 +2694,21 @@ bool Tracking::TrackLocalMap()
     mTrackedFr++;
 
     UpdateLocalMap();
+
+    auto CountFrameMP = [&]() {
+    int n = 0;
+    for(size_t i=0; i<mCurrentFrame.mvpMapPoints.size(); i++)
+    {
+        if(mCurrentFrame.mvpMapPoints[i] && !mCurrentFrame.mvpMapPoints[i]->isBad())
+            n++;
+    }
+    return n;
+    };
+    std::cout<< "[TLM BEFORE] frame=" << mCurrentFrame.mnId<< " localKFs=" << mvpLocalKeyFrames.size()<< " localMPs=" << mvpLocalMapPoints.size()<< " frameMPs=" << CountFrameMP()<< std::endl;
+
     SearchLocalPoints();
+
+    std::cout<< "[TLM AFTER_SEARCH] frame=" << mCurrentFrame.mnId<< " frameMPs=" << CountFrameMP()<< std::endl;
 
     // TOO check outliers before PO
     int aux1 = 0, aux2=0;
@@ -2664,34 +2720,57 @@ bool Tracking::TrackLocalMap()
                 aux2++;
         }
 
-    int inliers;
-    
+    int inliers = -1;
+    const char* branch = "NONE";
     //if (!mpAtlas->isImuInitialized()){
     // assuming mbOnlyTracking will only be on if we localize from disk loaded map
     if (mbOnlyTracking || !mpAtlas->isImuInitialized()){
-        Optimizer::PoseOptimization(&mCurrentFrame);
+        Sophus::SE3f TcwBefore = mCurrentFrame.GetPose();
+        inliers = Optimizer::PoseOptimization(&mCurrentFrame);
+        Sophus::SE3f TcwAfter = mCurrentFrame.GetPose();
+        Sophus::SE3f dT = TcwAfter * TcwBefore.inverse();
+
+        float dTrans = dT.translation().norm();
+        float dRotDeg = dT.so3().log().norm() * 57.295779513f;
+
+        std::cout<< "[POSEDELTA]"<< " frame=" << mCurrentFrame.mnId<< " inliers=" << inliers<< " dTrans=" << dTrans<< " dRotDeg=" << dRotDeg<< std::endl;
+        branch = "VISUAL";
     } else
-    {
+    {   
         if(mCurrentFrame.mnId<=mnLastRelocFrameId+mnFramesToResetIMU)
         {
             Verbose::PrintMess("TLM: PoseOptimization ", Verbose::VERBOSITY_DEBUG);
             Optimizer::PoseOptimization(&mCurrentFrame);
+            branch = "VISUAL_RESET_WINDOW";
         }
         else
-        {
+        {   
+            Frame* dbgPrev = mCurrentFrame.mpPrevFrame;
+
+            std::cout<< "[PIO_PRE]"
+                << " frame=" << mCurrentFrame.mnId
+                << " mbMapUpdated=" << mbMapUpdated
+                << " prev=" << dbgPrev<< " prevCPI=" << (dbgPrev ? dbgPrev->mpcpi : nullptr)
+                << " preintFrame=" << mCurrentFrame.mpImuPreintegratedFrame
+                << " preintKF=" << mCurrentFrame.mpImuPreintegrated
+                << " imuInit=" << mpAtlas->isImuInitialized()<< std::endl;
             // if(!mbMapUpdated && mState == OK) //  && (mnMatchesInliers>30))
             if(!mbMapUpdated && mCurrentFrame.mpPrevFrame->mpcpi) //  && (mnMatchesInliers>30))
             {
                 Verbose::PrintMess("TLM: PoseInertialOptimizationLastFrame ", Verbose::VERBOSITY_DEBUG);
                 inliers = Optimizer::PoseInertialOptimizationLastFrame(&mCurrentFrame); // , !mpLastKeyFrame->GetMap()->GetIniertialBA1());
+                branch = "PIO_LAST_FRAME";
             }
             else
             {
                 Verbose::PrintMess("TLM: PoseInertialOptimizationLastKeyFrame ", Verbose::VERBOSITY_DEBUG);
                 inliers = Optimizer::PoseInertialOptimizationLastKeyFrame(&mCurrentFrame); // , !mpLastKeyFrame->GetMap()->GetIniertialBA1());
+                branch = "PIO_LAST_KF";
             }
         }
     }
+    std::cout << "[TLM AFTER_OPT] frame=" << mCurrentFrame.mnId<< " optimizerInliers=" << inliers<< " imuInit=" <<mpAtlas->isImuInitialized()<< " branch=" << branch<< " mnMatchesInliers=" << mnMatchesInliers
+    << " mbMapUpdated=" << mbMapUpdated<< std::endl;
 
     aux1 = 0, aux2 = 0;
     for(int i=0; i<mCurrentFrame.N; i++)
@@ -2725,6 +2804,31 @@ bool Tracking::TrackLocalMap()
         }
     }
 
+    int dbgTotalMP = 0;
+    int dbgNonOutlier = 0;
+    int dbgObs0 = 0;
+    int dbgObsPos = 0;
+    int dbgBad = 0;
+
+    for(int i=0; i<mCurrentFrame.N; i++)
+    {
+        MapPoint* pMP = mCurrentFrame.mvpMapPoints[i];
+        if(!pMP)continue;
+        dbgTotalMP++;
+        if(pMP->isBad())dbgBad++;
+        if(!mCurrentFrame.mvbOutlier[i])
+        {
+            dbgNonOutlier++;
+            int obs = pMP->Observations();
+            if(obs > 0)
+                dbgObsPos++;
+            else
+                dbgObs0++;
+        }
+    }
+    std::cout<< "[MPSTAT]"<< " frame=" << mCurrentFrame.mnId<< " totalMP=" << dbgTotalMP<< " nonOutlier=" << dbgNonOutlier<< " obs0=" << dbgObs0<< " obsPos=" << dbgObsPos
+        << " bad=" << dbgBad<< " mnMatchesInliers=" << mnMatchesInliers<< std::endl;
+
     // Decide if the tracking was succesful
     // More restrictive if there was a relocalization recently
     mpLocalMapper->mnMatchesInliers=mnMatchesInliers;
@@ -2743,7 +2847,7 @@ bool Tracking::TrackLocalMap()
         {
             cout << "TrackLocalMap() mnMatchesInliers<15 && mpAtlas->isImuInitialized()" << " = " << mnMatchesInliers << endl;
             return false;
-        } else if (mnMatchesInliers<50 && !mpAtlas->isImuInitialized()){
+        } else if (mnMatchesInliers<30 && !mpAtlas->isImuInitialized()){
             cout << "TrackLocalMap() mnMatchesInliers<50 && !mpAtlas->isImuInitialized()" << " = " << mnMatchesInliers << endl;
             return false;
         }
@@ -3073,27 +3177,44 @@ void Tracking::SearchLocalPoints()
     }
 
     int nToMatch=0;
+    
+    int dbgLocal = 0;
+    int dbgBad = 0;
+    int dbgAlreadyMatched = 0;
+    int dbgInFrustum = 0;
+    int dbgOutFrustum = 0;
 
     // Project points in frame and check its visibility
     for(vector<MapPoint*>::iterator vit=mvpLocalMapPoints.begin(), vend=mvpLocalMapPoints.end(); vit!=vend; vit++)
     {
         MapPoint* pMP = *vit;
+        
+        if(!pMP)continue;
 
-        if(pMP->mnLastFrameSeen == mCurrentFrame.mnId)
+        dbgLocal++;
+
+        if(pMP->isBad()){
+            dbgBad++;
             continue;
-        if(pMP->isBad())
+        }
+        if(pMP->mnLastFrameSeen == mCurrentFrame.mnId){
+            dbgAlreadyMatched++;
             continue;
-        // Project (this fills MapPoint variables for matching)
-        if(mCurrentFrame.isInFrustum(pMP,0.5))
-        {
+        }
+        if(mCurrentFrame.isInFrustum(pMP, 0.5)){
+            dbgInFrustum++;
             pMP->IncreaseVisible();
             nToMatch++;
+        }else{
+            dbgOutFrustum++;
         }
-        if(pMP->mbTrackInView)
-        {
+        // Project (this fills MapPoint variables for matching)
+        if(pMP->mbTrackInView){
             mCurrentFrame.mmProjectPoints[pMP->mnId] = cv::Point2f(pMP->mTrackProjX, pMP->mTrackProjY);
         }
     }
+    std::cout<< "[SLPSTAT]"<< " frame=" << mCurrentFrame.mnId<< " local=" << dbgLocal<< " bad=" << dbgBad<< " already=" << dbgAlreadyMatched
+            << " inFrustum=" << dbgInFrustum<< " outFrustum=" << dbgOutFrustum<< std::endl;
     // cout << "SearchLocalPoints() nToMatch=" << nToMatch << endl;
 
     if(nToMatch>0)

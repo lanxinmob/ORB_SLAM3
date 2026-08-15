@@ -36,6 +36,7 @@
 using namespace std;
 using nlohmann::json;
 const double MS_TO_S = 1e-3; ///< Milliseconds to second conversion
+const double IMU_TO_CAM_OFFSET_S = -0.007677514901998616;
 
 void signal_callback_handler(int signum) {
    cout << "gopro_slam.cc Caught signal " << signum << endl;
@@ -72,8 +73,19 @@ bool LoadTelemetry(const string &path_to_telemetry_file,
     }
 
     double imu_start_t = sorted_acc.begin()->first;
+
+    double camera_start_t = 0.0;
+
+    if (!cori.empty()) {
+        camera_start_t = (double)cori.front()["cts"] * MS_TO_S;
+    }
+
+    std::cout << std::fixed << std::setprecision(9)<< "[TIME] camera CORI t0 = "<< camera_start_t << " s"<< std::endl;
     for (auto acc : sorted_acc) {
-        vTimeStamps.push_back(acc.first-imu_start_t);
+        vTimeStamps.push_back(acc.first - IMU_TO_CAM_OFFSET_S - camera_start_t);
+        /*std::cout << "[TIME] raw imu t0 = "<< sorted_acc.begin()->first
+          << ", camera t0 = "<< camera_start_t<< ", offset = "<< IMU_TO_CAM_OFFSET_S<< ", ORB imu t0 = "
+          << vTimeStamps.front()<< std::endl;*/
         vAcc.push_back(acc.second);
     }
     for (auto gyr : sorted_gyr) {
@@ -233,7 +245,7 @@ int main(int argc, char **argv) {
     // gather imu measurements between frames
     // Load imu measurements from previous frame
     vImuMeas.clear();
-    while(imuTimestamps[last_imu_idx] <= tframe && tframe > 0)
+    while(last_imu_idx<imuTimestamps.size() && imuTimestamps[last_imu_idx] <= tframe && tframe > 0)
     {
         vImuMeas.push_back(ORB_SLAM3::IMU::Point(vAcc[last_imu_idx].x,vAcc[last_imu_idx].y,vAcc[last_imu_idx].z,
                                                   vGyr[last_imu_idx].x,vGyr[last_imu_idx].y,vGyr[last_imu_idx].z,
@@ -245,7 +257,7 @@ int main(int argc, char **argv) {
         std::chrono::steady_clock::now();
 
     // Pass the image to the SLAM system
-    auto result = SLAM.LocalizeMonocular(im_track, tframe, vImuMeas);
+    auto result = SLAM.LocalizeMonocular(im_track, tframe,vImuMeas);
 
     // check lost frames
     if (! result.second){
@@ -274,15 +286,20 @@ int main(int argc, char **argv) {
   // Stop all threads
   SLAM.Shutdown();
 
-
-  // Save camera trajectory
-  if (!output_trajectory_tum.empty()) {
-    SLAM.SaveTrajectoryTUM(output_trajectory_tum);
-  }
+  std::cout << "[DEBUG] Shutdown finished" << std::endl;
+  std::cout << "[DEBUG] output csv = "
+            << output_trajectory_csv << std::endl;
 
   if (!output_trajectory_csv.empty()) {
-    SLAM.SaveTrajectoryCSV(output_trajectory_csv);
+
+      std::cout << "[DEBUG] calling SaveTrajectoryCSV" << std::endl;
+
+      SLAM.SaveTrajectoryCSV(output_trajectory_csv);
+
+      std::cout << "[DEBUG] SaveTrajectoryCSV returned" << std::endl;
   }
+
+  std::cout << "[DEBUG] gopro_slam normal exit" << std::endl;
 
   return 0;
 }

@@ -590,7 +590,15 @@ namespace ORB_SLAM3
         int nGood2 = CheckRT(R2,t1,mvKeys1,mvKeys2,mvMatches12,vbMatchesInliers,K, vP3D2, 4.0*mSigma2, vbTriangulated2, parallax2);
         int nGood3 = CheckRT(R1,t2,mvKeys1,mvKeys2,mvMatches12,vbMatchesInliers,K, vP3D3, 4.0*mSigma2, vbTriangulated3, parallax3);
         int nGood4 = CheckRT(R2,t2,mvKeys1,mvKeys2,mvMatches12,vbMatchesInliers,K, vP3D4, 4.0*mSigma2, vbTriangulated4, parallax4);
-
+        
+        std::cout<< "[RECONF]"
+            << " N=" << N
+            << " nGood=" << nGood1 << "," << nGood2
+            << "," << nGood3 << "," << nGood4
+            << " parallax=" << parallax1 << "," << parallax2
+            << "," << parallax3 << "," << parallax4
+            << " nMinGood=" << std::max(static_cast<int>(0.9*N),50)
+            << std::endl;
         int maxGood = max(nGood1,max(nGood2,max(nGood3,nGood4)));
 
         int nMinGood = max(static_cast<int>(0.9*N),minTriangulated);

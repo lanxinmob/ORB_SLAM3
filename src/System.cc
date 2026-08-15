@@ -608,28 +608,52 @@ bool System::isShutDown() {
 void System::SaveTrajectoryCSV(const string &filename)
 {
     cout << endl << "Saving camera trajectory to " << filename << " ..." << endl;
+    /*
     if(mSensor==MONOCULAR)
     {
         cerr << "ERROR: SaveTrajectoryCSV cannot be used for monocular." << endl;
         return;
-    }
+    }*/
 
     // Select the appropriate Map
     vector<Map*> vpMaps = mpAtlas->GetAllMaps();
-    int numMaxKFs = 0;
-    Map* pBiggerMap;
     std::cout << "There are " << std::to_string(vpMaps.size()) << " maps in the atlas" << std::endl;
-    for(Map* pMap :vpMaps)
+    
+    if(vpMaps.empty())
     {
-        std::cout << "  Map " << std::to_string(pMap->GetId()) << " has " << std::to_string(pMap->GetAllKeyFrames().size()) << " KFs" << std::endl;
-        if(pMap->GetAllKeyFrames().size() > numMaxKFs)
+        cerr << "[CSV] ERROR: Atlas contains 0 maps. "<< "No trajectory can be saved."<< endl;
+        return;
+    }
+
+    Map* pBiggerMap = nullptr;
+    size_t numMaxKFs = 0;
+
+    for(Map* pMap : vpMaps)
+    {
+        if(!pMap)continue;
+        const size_t nKFs =pMap->GetAllKeyFrames().size();
+
+        cout << "[CSV] Map "<< pMap->GetId()<< " has "<< nKFs<< " keyframes"<< endl;
+
+        if(pBiggerMap == nullptr ||nKFs > numMaxKFs)
         {
-            numMaxKFs = pMap->GetAllKeyFrames().size();
+            numMaxKFs = nKFs;
             pBiggerMap = pMap;
         }
     }
 
+    if(pBiggerMap == nullptr)
+    {
+        cerr << "[CSV] ERROR: No valid map found."<< endl;
+        return;
+    }
+
     vector<KeyFrame*> vpKFs = pBiggerMap->GetAllKeyFrames();
+    if(vpKFs.empty())
+    {
+        cerr << "[CSV] ERROR: Selected map has 0 keyframes. "<< "No trajectory can be saved."<< endl;
+        return;
+    }
     sort(vpKFs.begin(),vpKFs.end(),KeyFrame::lId);
 
     // Transform all keyframes so that the first keyframe is at the origin.
