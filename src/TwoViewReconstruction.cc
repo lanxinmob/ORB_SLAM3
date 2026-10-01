@@ -198,6 +198,8 @@ namespace ORB_SLAM3
         float SF;
         Eigen::Matrix3f F;
         TwoViewReconstruction::FindFundamental(vbMatchesInliers, SF, F);
+        if (SF <= 0.0f || vbMatchesInliers.size() != mvMatches12.size())
+            return false;
 
         // Reconstruct with T21 calculated from Tags
         Eigen::Matrix3f R = T21.rotationMatrix();
@@ -271,7 +273,7 @@ namespace ORB_SLAM3
     void TwoViewReconstruction::FindFundamental(vector<bool> &vbMatchesInliers, float &score, Eigen::Matrix3f &F21)
     {
         // Number of putative matches
-        const int N = vbMatchesInliers.size();
+        const int N = mvMatches12.size();
 
         // Normalize coordinates
         vector<cv::Point2f> vPn1, vPn2;
